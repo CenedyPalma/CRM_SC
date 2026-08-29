@@ -1,13 +1,27 @@
-import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, SetMetadata } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
+
+export const IS_PUBLIC_KEY = 'isPublic';
+export const Public = () => SetMetadata(IS_PUBLIC_KEY, true);
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
   private jwtService = new JwtService();
 
+  constructor(private reflector?: any) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    if (this.reflector && typeof this.reflector.getAllAndOverride === 'function') {
+      const isPublic = this.reflector.getAllAndOverride(IS_PUBLIC_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]);
+      if (isPublic) {
+        return true;
+      }
+    }
+
     const request = context.switchToHttp().getRequest<Request>();
     const token = this.extractTokenFromHeader(request);
     
@@ -16,8 +30,9 @@ export class JwtAuthGuard implements CanActivate {
     }
     
     try {
+      const secret = process.env.JWT_SECRET || 'super-secret-business-os-key';
       const payload = await this.jwtService.verifyAsync(token, {
-        secret: process.env.JWT_SECRET || 'super-secret-business-os-key'
+        secret,
       });
       // Attach the user payload to the request object
       (request as any)['user'] = payload;
@@ -27,7 +42,7 @@ export class JwtAuthGuard implements CanActivate {
         request.headers['x-tenant-id'] = payload.tenantId;
       }
     } catch {
-      throw new UnauthorizedException('Invalid token');
+      throw new UnauthorizedException('Invalid or expired token');
     }
     
     return true;

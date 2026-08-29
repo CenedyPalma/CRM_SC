@@ -1,0 +1,14 @@
+node_modules
+.pnpm-store
+.next
+.turbo
+dist
+build
+out
+*.log
+.git
+.env
+.env*.local
+postgres_data
+tmp
+.cache

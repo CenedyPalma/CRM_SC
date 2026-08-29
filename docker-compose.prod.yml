@@ -1,0 +1,190 @@
+version: '3.8'
+
+services:
+  # ----------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    container_name: crm_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_password}
+      POSTGRES_DB: ${POSTGRES_DB:-crm_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crm_internal
+
+  # ----------------------------------------------------------------------------
+  # Redis (Queue & Cache)
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: crm_redis
+    restart: always
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crm_internal
+
+  # ----------------------------------------------------------------------------
+  # Database Migration Runner (Runs automatically on startup)
+  # ----------------------------------------------------------------------------
+  db-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crm_db_migrate
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres_password@postgres:5432/crm_db?schema=public}
+    command: ["sh", "-c", "pnpm --filter @repo/database run db:push"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - crm_internal
+
+  # ----------------------------------------------------------------------------
+  # Web Core Frontend & API Gateway
+  # ----------------------------------------------------------------------------
+  web-core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_NAME: web-core
+    container_name: crm_web_core
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres_password@postgres:5432/crm_db?schema=public}
+      JWT_SECRET: ${JWT_SECRET:-super-secret-business-os-key}
+    depends_on:
+      - db-migrate
+    networks:
+      - crm_internal
+
+  # ----------------------------------------------------------------------------
+  # CRM Core Service
+  # ----------------------------------------------------------------------------
+  crm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_NAME: crm
+    container_name: crm_service_crm
+    restart: always
+    environment:
+      PORT: 3001
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres_password@postgres:5432/crm_db?schema=public}
+      JWT_SECRET: ${JWT_SECRET:-super-secret-business-os-key}
+    depends_on:
+      - db-migrate
+    networks:
+      - crm_internal
+
+  # ----------------------------------------------------------------------------
+  # Automation & BullMQ Workflow Service
+  # ----------------------------------------------------------------------------
+  automation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_NAME: automation
+    container_name: crm_service_automation
+    restart: always
+    environment:
+      PORT: 3009
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres_password@postgres:5432/crm_db?schema=public}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:-super-secret-business-os-key}
+    depends_on:
+      redis:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    networks:
+      - crm_internal
+
+  # ----------------------------------------------------------------------------
+  # BI Analytics Engine
+  # ----------------------------------------------------------------------------
+  bi-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_NAME: bi-engine
+    container_name: crm_service_bi
+    restart: always
+    environment:
+      PORT: 3013
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres_password@postgres:5432/crm_db?schema=public}
+      JWT_SECRET: ${JWT_SECRET:-super-secret-business-os-key}
+    depends_on:
+      - db-migrate
+    networks:
+      - crm_internal
+
+  # ----------------------------------------------------------------------------
+  # Team Chat Service
+  # ----------------------------------------------------------------------------
+  chat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_NAME: chat
+    container_name: crm_service_chat
+    restart: always
+    environment:
+      PORT: 3014
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres_password@postgres:5432/crm_db?schema=public}
+      JWT_SECRET: ${JWT_SECRET:-super-secret-business-os-key}
+    depends_on:
+      - db-migrate
+    networks:
+      - crm_internal
+
+  # ----------------------------------------------------------------------------
+  # NGINX Reverse Proxy & Load Balancer
+  # ----------------------------------------------------------------------------
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: crm_nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - web-core
+      - chat
+    networks:
+      - crm_internal
+
+networks:
+  crm_internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
