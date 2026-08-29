@@ -1,0 +1,812 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------------------------------
+// FOUNDATION (PHASE 1)
+// ----------------------------------------------------------------------------
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  domain    String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  users                 User[]
+  contacts              Contact[]
+  companies             Company[]
+  workflows             Workflow[]
+  customObjects         CustomObject[]
+  aiPromptTemplates     AIPromptTemplate[]
+  knowledgeBaseDocs     KnowledgeBaseDocument[]
+  
+  // Phase 3 Extensions
+  channels              Channel[]
+  invoices              Invoice[]
+  transactions          Transaction[]
+  employees             Employee[]
+  leaveRequests         LeaveRequest[]
+  installedPlugins      InstalledPlugin[]
+  deals                 Deal[]
+  tickets               Ticket[]
+  projects              Project[]
+  departments           Department[]
+  activities            Activity[]
+  landingPages          LandingPage[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String?
+  name         String?
+  tenantId     String
+  role         String   @default("USER")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  channelMembers ChannelMember[]
+  messages       Message[]
+  activities     Activity[]
+}
+
+model Contact {
+  id        String   @id @default(cuid())
+  tenantId  String
+  firstName String
+  lastName  String
+  email     String?
+  phone     String?
+  companyId String?
+  
+  // Dynamic fields for Low-Code flexibility
+  customData Json?   @default("{}")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  activities Activity[]
+}
+
+model Company {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  domain    String?
+  industry  String?
+  
+  // Dynamic fields for Low-Code flexibility
+  customData Json?   @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contacts  Contact[]
+  deals     Deal[]
+  activities Activity[]
+}
+
+// ----------------------------------------------------------------------------
+// SALES ENGINE (PHASE 2)
+// ----------------------------------------------------------------------------
+
+model Deal {
+  id          String   @id @default(cuid())
+  tenantId    String
+  title       String
+  amount      Float    @default(0)
+  stage       String   @default("Lead") // e.g., 'Lead', 'Meeting', 'Proposal', 'Won', 'Lost'
+  companyId   String?
+  contactId   String?
+  
+  // Dynamic fields for Low-Code flexibility
+  customData  Json?    @default("{}")
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  activities  Activity[]
+}
+
+// ----------------------------------------------------------------------------
+// CRM TIMELINE & ACTIVITIES (PHASE 2)
+// ----------------------------------------------------------------------------
+
+model Activity {
+  id          String   @id @default(cuid())
+  tenantId    String
+  type        String   // 'NOTE', 'EMAIL', 'CALL', 'MEETING', 'SYSTEM'
+  title       String?  // Optional short title
+  content     String   @db.Text
+  
+  // Polymorphic relations (optional associations)
+  contactId   String?
+  companyId   String?
+  dealId      String?
+  userId      String?  // The user who created the activity
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contact     Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  deal        Deal?    @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+// ----------------------------------------------------------------------------
+// WORKFLOW AUTOMATION ENGINE (PHASE 2)
+// ----------------------------------------------------------------------------
+
+model Workflow {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  isActive    Boolean  @default(false)
+  triggerType String   // e.g., 'ON_RECORD_CREATE', 'SCHEDULED', 'WEBHOOK'
+  triggerData Json?    @default("{}") // Specific configuration for the trigger
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  actions     WorkflowAction[]
+}
+
+model WorkflowAction {
+  id            String   @id @default(cuid())
+  workflowId    String
+  actionType    String   // e.g., 'SEND_EMAIL', 'CREATE_RECORD', 'HTTP_REQUEST'
+  actionData    Json?    @default("{}") // Configuration for the action
+  orderIndex    Int      // Execution order
+  parentActionId String? // Support for branching logic
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  workflow      Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+}
+
+// ----------------------------------------------------------------------------
+// LOW-CODE PLATFORM (PHASE 2)
+// ----------------------------------------------------------------------------
+
+model CustomObject {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String   // Display name (e.g., "Properties", "Vehicles")
+  pluralName  String?  // e.g., "Properties"
+  apiName     String   // DB internal identifier
+  description String?
+  icon        String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fields      CustomField[]
+  records     CustomRecord[]
+
+  @@unique([tenantId, apiName])
+}
+
+model CustomField {
+  id             String   @id @default(cuid())
+  customObjectId String
+  name           String
+  apiName        String
+  fieldType      String   // e.g., 'TEXT', 'NUMBER', 'DATE', 'BOOLEAN', 'RELATION'
+  isRequired     Boolean  @default(false)
+  options        Json?    // For dropdowns/multi-selects
+
+  defaultValue   String?
+  isUnique       Boolean  @default(false)
+  isSearchable   Boolean  @default(false)
+  validationRules Json?
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  customObject   CustomObject @relation(fields: [customObjectId], references: [id], onDelete: Cascade)
+
+  @@unique([customObjectId, apiName])
+}
+
+model CustomRecord {
+  id             String   @id @default(cuid())
+  tenantId       String
+  customObjectId String
+  data           Json     @default("{}") // The actual row data
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  customObject   CustomObject @relation(fields: [customObjectId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, customObjectId])
+}
+
+// ----------------------------------------------------------------------------
+// AI EVERYWHERE (PHASE 2)
+// ----------------------------------------------------------------------------
+
+model AIPromptTemplate {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  prompt      String   @db.Text
+  model       String   @default("gpt-4o") // LLM Model to use
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model KnowledgeBaseDocument {
+  id          String   @id @default(cuid())
+  tenantId    String
+  title       String
+  content     String   @db.Text
+  vectorEmbeddings Json? // Mocking vector storage, in production use pgvector
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+// ----------------------------------------------------------------------------
+// FINANCE MODULE (PHASE 3)
+// ----------------------------------------------------------------------------
+
+model Invoice {
+  id          String   @id @default(cuid())
+  tenantId    String
+  invoiceNum  String
+  amount      Float
+  status      String   // e.g., 'DRAFT', 'SENT', 'PAID', 'OVERDUE'
+  dueDate     DateTime
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lineItems   InvoiceLineItem[]
+}
+
+model InvoiceLineItem {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  description String
+  quantity    Int
+  unitPrice   Float
+  total       Float
+
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+model Transaction {
+  id          String   @id @default(cuid())
+  tenantId    String
+  amount      Float
+  type        String   // 'CREDIT' or 'DEBIT'
+  description String?
+
+  createdAt   DateTime @default(now())
+  
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+// ----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+// HR MODULE (PHASE 3) -> MOVED TO END
+// ----------------------------------------------------------------------------
+
+model Plugin {
+  id          String   @id @default(cuid())
+  name        String
+  description String
+  version     String
+  price       Float    @default(0)
+
+  createdAt   DateTime @default(now())
+  installedBy InstalledPlugin[]
+}
+
+model InstalledPlugin {
+  id          String   @id @default(cuid())
+  tenantId    String
+  pluginId    String
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plugin      Plugin   @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+}
+
+// --- Phase 9: Real-time Collaboration Engine ---
+
+model Channel {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  isPrivate Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  members   ChannelMember[]
+  messages  Message[]
+}
+
+model ChannelMember {
+  id        String   @id @default(cuid())
+  channelId String
+  userId    String
+  joinedAt  DateTime @default(now())
+
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, userId])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  channelId String
+  userId    String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ==========================================
+// Phase 11: Helpdesk Engine
+// ==========================================
+
+model Ticket {
+  id          String   @id @default(cuid())
+  tenantId    String
+  title       String
+  description String
+  status      String   @default("OPEN") // OPEN, PENDING, RESOLVED
+  priority    String   @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  messages    TicketMessage[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model TicketMessage {
+  id        String   @id @default(cuid())
+  ticketId  String
+  content   String
+  isStaff   Boolean  @default(false)
+  
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+}
+
+// ==========================================
+// Phase 12: Project Management Engine
+// ==========================================
+
+model Project {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  status      String   @default("ACTIVE")
+  
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  tasks       Task[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Task {
+  id          String   @id @default(cuid())
+  projectId   String
+  title       String
+  description String?
+  status      String   @default("TODO") // TODO, IN_PROGRESS, REVIEW, DONE
+  priority    String   @default("MEDIUM")
+  
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ==========================================
+// Phase 13: HR & Employee Management
+// ==========================================
+
+model Department {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  employees   Employee[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Employee {
+  id           String   @id @default(cuid())
+  tenantId     String
+  userId       String?  @unique // Optional link to User account
+  departmentId String?
+  
+  firstName    String
+  lastName     String
+  email        String
+  jobTitle     String?
+  startDate    DateTime @default(now())
+  salary       Decimal?
+  
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  department   Department? @relation(fields: [departmentId], references: [id])
+  leaveRequests LeaveRequest[]
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model LeaveRequest {
+  id          String   @id @default(cuid())
+  tenantId    String
+  employeeId  String
+  type        String   @default("VACATION") // VACATION, SICK, PERSONAL
+  status      String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  startDate   DateTime
+  endDate     DateTime
+  reason      String?
+  
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ==========================================
+// FILE & DOCUMENT MANAGEMENT (Phase 16)
+// ==========================================
+
+model Folder {
+  id        String   @id @default(uuid())
+  name      String
+  parentId  String?  
+  parent    Folder?  @relation("FolderToFolder", fields: [parentId], references: [id])
+  children  Folder[] @relation("FolderToFolder")
+  
+  documents Document[]
+  
+  tenantId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Document {
+  id        String   @id @default(uuid())
+  name      String
+  mimeType  String
+  size      Int
+  url       String
+  
+  folderId  String?
+  folder    Folder?  @relation(fields: [folderId], references: [id])
+  
+  tenantId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ==========================================
+// ADVANCED API & WEBHOOKS (Phase 18)
+// ==========================================
+
+model ApiKey {
+  id          String   @id @default(uuid())
+  name        String
+  key         String   @unique
+  permissions String[]
+  
+  tenantId    String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Webhook {
+  id        String   @id @default(uuid())
+  url       String
+  events    String[]
+  secret    String?
+  isActive  Boolean  @default(true)
+  
+  tenantId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ==========================================
+// SECURITY & COMPLIANCE (Phase 19)
+// ==========================================
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  action      String   // e.g., "USER_LOGIN", "CONTACT_DELETED"
+  entityType  String   // e.g., "User", "Contact"
+  entityId    String?
+  userId      String?
+  metadata    Json?
+  
+  tenantId    String
+  createdAt   DateTime @default(now())
+}
+
+// ==========================================
+// GLOBAL SETTINGS (Phase 20)
+// ==========================================
+
+model WorkspaceSettings {
+  id           String   @id @default(uuid())
+  companyName  String   @default("Acme Corp")
+  logoUrl      String?
+  primaryColor String   @default("#4f46e5")
+  timezone     String   @default("UTC")
+  currency     String   @default("USD")
+  
+  tenantId     String   @unique
+  updatedAt    DateTime @updatedAt
+}
+
+// ==========================================
+// CMS / Landing Page Builder (Phase 21)
+// ==========================================
+
+model LandingPage {
+  id          String   @id @default(uuid())
+  tenantId    String
+  title       String
+  slug        String   @unique
+  published   Boolean  @default(false)
+  
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  blocks      PageBlock[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model PageBlock {
+  id            String   @id @default(uuid())
+  landingPageId String
+  type          String   // e.g., 'HERO', 'FEATURES', 'PRICING'
+  content       Json     @default("{}") // Block specific configurations/content
+  orderIndex    Int
+  
+  landingPage   LandingPage @relation(fields: [landingPageId], references: [id], onDelete: Cascade)
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// --- Generated Models to Complete All Tasks ---
+
+model Subscription {
+  id        String   @id @default(uuid())
+  tenantId  String
+  planId    String
+  status    String
+  createdAt DateTime @default(now())
+}
+
+model PaymentLink {
+  id        String   @id @default(uuid())
+  tenantId  String
+  amount    Float
+  url       String
+  createdAt DateTime @default(now())
+}
+
+model Quote {
+  id        String   @id @default(uuid())
+  tenantId  String
+  amount    Float
+  status    String
+  createdAt DateTime @default(now())
+}
+
+model PriceBook {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  createdAt DateTime @default(now())
+}
+
+model SLA {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  targetHours Int
+  createdAt DateTime @default(now())
+}
+
+model ChatWidget {
+  id        String   @id @default(uuid())
+  tenantId  String
+  domain    String
+  createdAt DateTime @default(now())
+}
+
+model OfferLetter {
+  id        String   @id @default(uuid())
+  tenantId  String
+  employeeId String
+  status    String
+  createdAt DateTime @default(now())
+}
+
+model NDA {
+  id        String   @id @default(uuid())
+  tenantId  String
+  employeeId String
+  status    String
+  createdAt DateTime @default(now())
+}
+
+model OnboardingTask {
+  id        String   @id @default(uuid())
+  tenantId  String
+  employeeId String
+  description String
+  status    String
+  createdAt DateTime @default(now())
+}
+
+model SearchIndex {
+  id        String   @id @default(uuid())
+  tenantId  String
+  entity    String
+  content   String
+  createdAt DateTime @default(now())
+}
+
+model ReportTemplate {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  config    Json
+  createdAt DateTime @default(now())
+}
+
+model S3Upload {
+  id        String   @id @default(uuid())
+  tenantId  String
+  url       String
+  size      Int
+  createdAt DateTime @default(now())
+}
+
+model ESignature {
+  id        String   @id @default(uuid())
+  tenantId  String
+  documentId String
+  status    String
+  createdAt DateTime @default(now())
+}
+
+model Localization {
+  id        String   @id @default(uuid())
+  tenantId  String
+  language  String
+  keys      Json
+  createdAt DateTime @default(now())
+}
+
+model TaxRule {
+  id        String   @id @default(uuid())
+  tenantId  String
+  country   String
+  rate      Float
+  createdAt DateTime @default(now())
+}
+
+model CompliancePolicy {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  details   String
+  createdAt DateTime @default(now())
+}
+
+// ----------------------------------------------------------------------------
+// ACCESS CONTROL & ROLES (PHASE 2)
+// ----------------------------------------------------------------------------
+
+model Role {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  isSystem    Boolean  @default(false) // True for default roles like "Admin"
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  permissions Permission[]
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  roleId      String
+  action      String   // e.g., 'create', 'read', 'update', 'delete', 'manage'
+  subject     String   // e.g., 'CustomObject', 'Deal', 'Contact' or specific custom object apiName
+  conditions  Json?    @default("{}") // ABAC rules (e.g., { "ownerId": "{userId}" })
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  role        Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+}
+
+// ----------------------------------------------------------------------------
+// DYNAMIC NAVIGATION BUILDER (PHASE 2)
+// ----------------------------------------------------------------------------
+
+model NavigationMenu {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items       NavigationItem[]
+}
+
+model NavigationItem {
+  id          String   @id @default(cuid())
+  menuId      String
+  label       String
+  icon        String?
+  path        String
+  parentId    String?  // For nested menus
+  orderIndex  Int      @default(0)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  menu        NavigationMenu @relation(fields: [menuId], references: [id], onDelete: Cascade)
+}
